@@ -1,0 +1,110 @@
+#include <esp_now.h>
+#include <WiFi.h>
+#include <SD.h>
+#include <SPI.h>
+
+// Gönderici ile aynı veri yapısı
+typedef struct struct_message {
+  float Temperature;
+  float Altitude;
+  float Pressure;
+  float ax;
+  float ay;
+  float az;
+  float gx;
+  float gy;
+  float gz;
+  float Heading;
+  String GPSLat;
+  String GPSLon;
+  String GPSDate;
+  String GPSTime;
+} struct_message;
+
+struct_message myData;
+
+const int SD_CS_PIN = 5;
+bool sdOK = false;
+
+void OnDataRecv(const esp_now_recv_info_t *recv_info, const uint8_t *incomingData, int len) {
+  memcpy(&myData, incomingData, sizeof(myData));
+
+  // MAC adresi string'e çevir
+  char macStr[18];
+  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+           recv_info->src_addr[0], recv_info->src_addr[1], recv_info->src_addr[2],
+           recv_info->src_addr[3], recv_info->src_addr[4], recv_info->src_addr[5]);
+
+  // Seri monitöre yazdır
+  Serial.println("=== Veri Alındı ===");
+  Serial.printf("MAC: %s\n", macStr);
+  Serial.printf("Sıcaklık: %.2f °C\n", myData.Temperature);
+  Serial.printf("Yükseklik: %.2f m\n", myData.Altitude);
+  Serial.printf("Basınç: %.2f Pa\n", myData.Pressure);
+  Serial.printf("IvmeX: %.2f m/s², IvmeY: %.2f, IvmeZ: %.2f\n", myData.ax, myData.ay, myData.az);
+  Serial.printf("GyroX: %.2f °/s, GyroY: %.2f, GyroZ: %.2f\n", myData.gx, myData.gy, myData.gz);
+  Serial.printf("Heading: %.2f°\n", myData.Heading);
+  Serial.printf("GPS Lat: %s, Lon: %s\n", myData.GPSLat.c_str(), myData.GPSLon.c_str());
+  Serial.printf("GPS Date: %s, Time: %s\n", myData.GPSDate.c_str(), myData.GPSTime.c_str());
+  Serial.println("====================");
+
+  // SD karta kaydet
+  if (sdOK) {
+    File file = SD.open("/esp_now_log.csv", FILE_APPEND);
+    if (file) {
+      file.print(macStr); file.print(",");
+      file.print(myData.Temperature, 2); file.print(",");
+      file.print(myData.Altitude, 2); file.print(",");
+      file.print(myData.Pressure, 2); file.print(",");
+      file.print(myData.ax, 2); file.print(",");
+      file.print(myData.ay, 2); file.print(",");
+      file.print(myData.az, 2); file.print(",");
+      file.print(myData.gx, 2); file.print(",");
+      file.print(myData.gy, 2); file.print(",");
+      file.print(myData.gz, 2); file.print(",");
+      file.print(myData.Heading, 2); file.print(",");
+      file.print(myData.GPSLat); file.print(",");
+      file.print(myData.GPSLon); file.print(",");
+      file.print(myData.GPSDate); file.print(",");
+      file.print(myData.GPSTime); file.print(",");
+      file.println(millis());
+      file.close();
+    } else {
+      Serial.println("SD Karta yazılamadı!");
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.mode(WIFI_STA); // Alıcı modu
+
+  // SD Kart başlat
+  if (SD.begin(SD_CS_PIN)) {
+    sdOK = true;
+    Serial.println("SD Kart Başlatıldı");
+
+    // Dosya yoksa başlık satırı yaz
+    if (!SD.exists("/esp_now_log.csv")) {
+      File file = SD.open("/esp_now_log.csv", FILE_WRITE);
+      if (file) {
+        file.println("MAC,Temperature,Altitude,Pressure,AccelX,AccelY,AccelZ,GyroX,GyroY,GyroZ,Heading,GPSLat,GPSLon,GPSDate,GPSTime,Time(ms)");
+        file.close();
+      }
+    }
+  } else {
+    Serial.println("SD Kart Başlatılamadı");
+  }
+
+  // ESP-NOW başlat
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("ESP-NOW başlatılamadı!");
+    return;
+  }
+
+  esp_now_register_recv_cb(OnDataRecv); // Veri alma callback
+}
+
+void loop() {
+  // Veri alma işini callback hallediyor
+}
