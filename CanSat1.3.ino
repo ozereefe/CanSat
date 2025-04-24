@@ -36,11 +36,21 @@ typedef struct struct_message {
   float Temperature;
   float Altitude;
   float Pressure;
+  float ax;
+  float ay;
+  float az;
+  float gx;
+  float gy;
+  float gz;
+  float Heading;
+  String GPSLat;
+  String GPSLon;
+  String GPSDate;
+  String GPSTime;
 } struct_message;
 struct_message myData;
 
-// REPLACE WITH YOUR RECEIVER MAC Address
-uint8_t broadcastAddress[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+uint8_t broadcastAddress[] = {0xe4, 0x65, 0xb8, 0xda, 0x73, 0x04};
 esp_now_peer_info_t peerInfo;
 
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
@@ -50,14 +60,12 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial);
   mySerial.begin(9600, SERIAL_8N1, RXPin, TXPin);
   Wire.begin();
 
   pinMode(buzzerPin, OUTPUT);
   digitalWrite(buzzerPin, LOW);
 
-  // BMP085 başlat
   if (bmp.begin()) {
     bmpOK = true;
     Serial.println("BMP085 OK");
@@ -99,7 +107,6 @@ void setup() {
     Serial.println("SD Kart BAŞARISIZ");
   }
 
-  // ESP-NOW Setup
   WiFi.mode(WIFI_STA);
   if (esp_now_init() != ESP_OK) {
     Serial.println("ESP-NOW başlatılamadı");
@@ -122,52 +129,28 @@ void loop() {
   if (currentMillis - previousMillis >= interval) {
     previousMillis = currentMillis;
 
-    String temperature = "N/A", pressure = "N/A", altitude = "N/A";
-    String ax = "N/A", ay = "N/A", az = "N/A";
-    String gx = "N/A", gy = "N/A", gz = "N/A";
-    String mpuTemp = "N/A";
-    String headingStr = "N/A";
+    float accX = 0, accY = 0, accZ = 0;
+    float gyrX = 0, gyrY = 0, gyrZ = 0;
+    float headingDeg = 0;
+    float temp = 0, pres = 0, altValue = 999;
     String gpsLat = "N/A", gpsLon = "N/A", gpsDate = "N/A", gpsTime = "N/A";
+    String mpuTemp = "N/A";
 
-    float altValue = 999;
     if (bmpOK) {
-      float temp = bmp.readTemperature();
-      float pres = bmp.readPressure();
+      temp = bmp.readTemperature();
+      pres = bmp.readPressure();
       altValue = bmp.readAltitude(101500);
-
-      temperature = String(temp, 2);
-      pressure = String(pres);
-      altitude = String(altValue, 2);
-
-      // ESP-NOW veri gönder
-      myData.Temperature = temp;
-      myData.Pressure = pres;
-      myData.Altitude = altValue;
-      esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
     }
-
-    float altitudeDiff = abs(altValue - previousAltitude);
-    if (previousAltitude != -999) {
-      if (altitudeDiff < 0.5 && !buzzerActive) {
-        tone(buzzerPin, 1000);
-        buzzerActive = true;
-        Serial.println(">>> İNİŞ TAMAMLANDI - BUZZER AKTİF <<<");
-      } else if (altitudeDiff >= 0.05) {
-        noTone(buzzerPin);
-        buzzerActive = false;
-      }
-    }
-    previousAltitude = altValue;
 
     if (mpuOK) {
       sensors_event_t a, g, t;
       mpu.getEvent(&a, &g, &t);
-      ax = String(a.acceleration.x, 2);
-      ay = String(a.acceleration.y, 2);
-      az = String(a.acceleration.z, 2);
-      gx = String(g.gyro.x, 2);
-      gy = String(g.gyro.y, 2);
-      gz = String(g.gyro.z, 2);
+      accX = a.acceleration.x;
+      accY = a.acceleration.y;
+      accZ = a.acceleration.z;
+      gyrX = g.gyro.x;
+      gyrY = g.gyro.y;
+      gyrZ = g.gyro.z;
       mpuTemp = String(t.temperature, 2);
     }
 
@@ -178,7 +161,7 @@ void loop() {
       heading += declination;
       if (heading < 0) heading += 2 * PI;
       if (heading > 2 * PI) heading -= 2 * PI;
-      headingStr = String(heading * 180 / M_PI, 2);
+      headingDeg = heading * 180 / M_PI;
     }
 
     while (mySerial.available() > 0) gps.encode(mySerial.read());
@@ -193,24 +176,58 @@ void loop() {
       gpsTime = String(gps.time.hour()) + ":" + String(gps.time.minute()) + ":" + String(gps.time.second());
     }
 
-    String csv = "Time: " + String(millis()) + "th millisecond\n" +
-                 "Temperature: " + temperature + " °C\n" +
-                 "Pressure: " + pressure + "Pa\n" +
-                 "Altitude: " + altitude + "m\n" +
-                 "AccelX: " + ax + "m/s^2\n" +
-                 "AccelY: " + ay + "m/s^2\n" +
-                 "AccelZ: " + az + "m/s^2\n" +
-                 "GyroX: " + gx + "°/s\n" +
-                 "GyroY: " + gy + "°/s\n" +
-                 "GyroZ: " + gz + "°/s\n" +
-                 "MPU Temp: " + mpuTemp + "°C\n" +
-                 "Heading: " + headingStr + "°\n" +
-                 "Latitude: " + gpsLat + "°\n" +
-                 "Longitude: " + gpsLon + "°\n" +
+    // Buzzer mantığı
+    float altitudeDiff = abs(altValue - previousAltitude);
+    if (previousAltitude != -999) {
+      if (altitudeDiff < 0.5 && !buzzerActive) {
+        tone(buzzerPin, 1000);
+        buzzerActive = true;
+        Serial.println(">>> İNİŞ TAMAMLANDI - BUZZER AKTİF <<<");
+      } else if (altitudeDiff >= 0.05) {
+        noTone(buzzerPin);
+        buzzerActive = false;
+      }
+    }
+    previousAltitude = altValue;
+
+    // Verileri myData'ya yaz
+    myData.Temperature = temp;
+    myData.Pressure = pres;
+    myData.Altitude = altValue;
+    myData.ax = accX;
+    myData.ay = accY;
+    myData.az = accZ;
+    myData.gx = gyrX;
+    myData.gy = gyrY;
+    myData.gz = gyrZ;
+    myData.Heading = headingDeg;
+    myData.GPSLat = gpsLat;
+    myData.GPSLon = gpsLon;
+    myData.GPSDate = gpsDate;
+    myData.GPSTime = gpsTime;
+
+    // ESP-NOW ile gönder
+    esp_now_send(broadcastAddress, (uint8_t *)&myData, sizeof(myData));
+
+    // CSV formatında veriyi hazırla
+    String csv = "Time: " + String(millis()) + "ms\n" +
+                 "Temperature: " + String(temp, 2) + " °C\n" +
+                 "Pressure: " + String(pres, 2) + " Pa\n" +
+                 "Altitude: " + String(altValue, 2) + " m\n" +
+                 "AccelX: " + String(accX, 2) + " m/s^2\n" +
+                 "AccelY: " + String(accY, 2) + " m/s^2\n" +
+                 "AccelZ: " + String(accZ, 2) + " m/s^2\n" +
+                 "GyroX: " + String(gyrX, 2) + " °/s\n" +
+                 "GyroY: " + String(gyrY, 2) + " °/s\n" +
+                 "GyroZ: " + String(gyrZ, 2) + " °/s\n" +
+                 "MPU Temp: " + mpuTemp + " °C\n" +
+                 "Heading: " + String(headingDeg, 2) + "°\n" +
+                 "Latitude: " + gpsLat + "\n" +
+                 "Longitude: " + gpsLon + "\n" +
                  "Date: " + gpsDate + "\n" +
                  "Time: " + gpsTime + "\n";
 
-    Serial.println("Kayıt: " + csv);
+    Serial.println("Kayıt: \n" + csv);
 
     if (sdOK) {
       File file = SD.open("/flight_log.csv", FILE_APPEND);
